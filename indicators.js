@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Deriv KAMA Indicator — Node.js (server-side)
+ * Deriv EMA Indicator — Node.js (server-side)
  * Requires: ws  →  npm install ws
  * Usage:    node indicators.js
  */
@@ -20,56 +20,45 @@ const API_URL = 'wss://api.derivws.com/trading/v1/options/ws/public';
 let ws;
 
 // ─── Indicator Configuration ──────────────────────────────────────────────────
-const KAMA_PERIODS       = [10, 20];    // Single KAMA now, used for both the touch alert and the pullback-streak alert
-const TOUCH_ALERT_KAMA   = 20;      // KAMA used to detect a "touch" and fire the touch alert
-const COOLDOWN_CANDLES   = 2;        // Closed candles to wait before re-alerting for touches
+const COOLDOWN_CANDLES   = 4;        // Closed candles to wait before re-alerting for touches
 
-// Kaufman's Adaptive Moving Average smoothing constants (standard defaults)
-const KAMA_FAST_PERIOD   = 2;        // Fastest EMA constant used inside KAMA's smoothing
-const KAMA_SLOW_PERIOD   = 30;       // Slowest EMA constant used inside KAMA's smoothing
+// ─── EMA configuration ─────────────────────────────────────────────────────────
+const EMA_PERIODS        = [20, 100];   // Classic EMAs
+const TOUCH_ALERT_EMAS   = [20, 100];   // EMAs used to detect a "touch" and fire the touch alert
 
-// Emoji mapping to identify the KAMA period
-const KAMA_EMOJIS = {
-  10: '🔟',
-  20: '2️⃣0️⃣'
+// Emoji mapping to identify the EMA period
+const EMA_EMOJIS = {
+  20:  '2️⃣0️⃣',
+  100: '1️⃣0️⃣0️⃣'
 };
 
-// ─── KAMA-pullback candle-streak configuration ─────────────────────────────────
-const PULLBACK_KAMA_PERIOD  = 20;      // KAMA used to gauge trend side for the pullback alert
+// ─── EMA-pullback candle-streak configuration ──────────────────────────────────
+const PULLBACK_EMA_PERIOD   = 20;      // EMA used to gauge trend side for the pullback alert
 const PULLBACK_STREAK_LEN   = 2;       // Consecutive pullback candles required to fire
 const PULLBACK_EMOJIS = {
-  redPullback:   '🔴',   // uptrend (price above KAMA10): red candles that still close at/above it
-  greenPullback: '🟢'    // downtrend (price below KAMA10): green candles that still close at/below it
+  redPullback:   '🔴',   // uptrend (price above EMA20): red candles that still close at/above it
+  greenPullback: '🟢'    // downtrend (price below EMA20): green candles that still close at/below it
 };
 
 // ─── Consecutive same-colour candle configuration ──────────────────────────────
-// Independent of KAMA/EMA and of the pullback streak: fires whenever N closed
+// Independent of EMA and of the pullback streak: fires whenever N closed
 // candles in a row share the same colour, anywhere on the chart.
-const CONSECUTIVE_CANDLE_LEN = 8;      // Same-colour candles in a row required to fire
+const CONSECUTIVE_CANDLE_LEN = 4;      // Same-colour candles in a row required to fire
 const CONSECUTIVE_EMOJIS = {
   bullish: '🟢',
   bearish: '🔴'
 };
 
-// ─── EMA(100) touch-alert configuration ─────────────────────────────────────────
-// Separate from KAMA — the touch alert now fires for BOTH KAMA10 and EMA100 touches.
-const EMA_PERIODS      = [100];  // Classic EMA, used only for the touch alert
-const TOUCH_ALERT_EMA  = 100;    // EMA used to detect a "touch" and fire the touch alert
-
-const EMA_EMOJIS = {
-  100: '1️⃣0️⃣0️⃣'
-};
-
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
 const SYMBOLS    = ['R_10' /*, 'R_25' */];
-const TIMEFRAMES = ['15min'];
+const TIMEFRAMES = ['30min'];
 
-const timeframeMap = { '15min': 900 }; // 15 mins = 900 seconds
+const timeframeMap = { '30min': 1800 }; // 15 mins = 900 seconds
 
 const displayNames = {
   'R_10':    'Volatility 10 Index',
   // 'R_25':    'Volatility 25 Index',
-  '15min':  '15 minutes'
+  '30min':  '30 minutes'
 };
 
 const MAX_HISTORICAL_CANDLES = 5000;
@@ -77,9 +66,6 @@ const MAX_HISTORICAL_CANDLES = 5000;
 // ─── State ───────────────────────────────────────────────────────────────────
 const historicalData        = {};
 const currentCandles        = {};
-const kamaNotificationState = {};
-const kamaState              = {};
-const kamaCloseWindow        = {};  // rolling window of last (period+1) closes, per symbol/period
 const emaNotificationState  = {};
 const emaState              = {};
 const streakState           = {};
@@ -89,9 +75,6 @@ function initState() {
   SYMBOLS.forEach(sym => {
     historicalData[sym]        = {};
     currentCandles[sym]        = {};
-    kamaNotificationState[sym] = {};
-    kamaState[sym]              = {};
-    kamaCloseWindow[sym]        = {};
     emaNotificationState[sym]  = {};
     emaState[sym]               = {};
     streakState[sym]           = {};
@@ -100,17 +83,9 @@ function initState() {
     TIMEFRAMES.forEach(tf => {
       historicalData[sym][tf]        = [];
       currentCandles[sym][tf]        = null;
-      kamaNotificationState[sym][tf] = {};
       emaNotificationState[sym][tf]  = {};
       streakState[sym][tf]           = { type: null, count: 0, alertSent: false };
       candleRunState[sym][tf]        = { color: null, count: 0, alertSent: false };
-
-      KAMA_PERIODS.forEach(period => {
-        kamaNotificationState[sym][tf][period] = { 
-          lastAlertTimestamp: null, 
-          notifSent: false
-        };
-      });
 
       EMA_PERIODS.forEach(period => {
         emaNotificationState[sym][tf][period] = {
@@ -118,11 +93,6 @@ function initState() {
           notifSent: false
         };
       });
-    });
-
-    KAMA_PERIODS.forEach(period => {
-      kamaState[sym][period]       = null;
-      kamaCloseWindow[sym][period] = [];
     });
 
     EMA_PERIODS.forEach(period => {
@@ -154,7 +124,7 @@ async function sendTelegramNotification(message, dedupKey) {
 }
 
 // ─── Alert batching ────────────────────────────────────────────────────────────
-// Candle-close alerts (KAMA touch, EMA touch, pullback streak, consecutive candles)
+// Candle-close alerts (EMA touch, pullback streak, consecutive candles)
 // are collected while a candle closes and sent as ONE message, e.g.
 //   "🟣 🔴🔴🔴 Volatility 10 Index"
 let alertBatch = null;
@@ -181,112 +151,7 @@ function flushAlertBatch() {
   sendTelegramNotification(message, keys);
 }
 
-// ─── KAMA helpers ──────────────────────────────────────────────────────────────
-// Kaufman's Adaptive Moving Average: adapts its smoothing speed to market
-// efficiency. ER (efficiency ratio) = net change / sum of absolute changes
-// over `period` bars. SC (smoothing constant) = [ER*(fastSC-slowSC)+slowSC]^2.
-function kamaSmoothingConstant(er) {
-  const fastSC = 2 / (KAMA_FAST_PERIOD + 1);
-  const slowSC = 2 / (KAMA_SLOW_PERIOD + 1);
-  const sc     = er * (fastSC - slowSC) + slowSC;
-  return sc * sc;
-}
-
-function initKAMA(symbol, closedCandles, period) {
-  const data = closedCandles
-    .filter(c => isFinite(c.close) && c.close > 0)
-    .sort((a, b) => a.timestamp - b.timestamp);
-
-  const closes = data.map(c => c.close);
-
-  if (closes.length <= period) {
-    kamaState[symbol][period]       = null;
-    kamaCloseWindow[symbol][period] = [];
-    return;
-  }
-
-  // Seed KAMA with the price at index `period`, then walk forward applying
-  // the adaptive smoothing constant at each step.
-  let kama = closes[period];
-  for (let i = period + 1; i < closes.length; i++) {
-    const change = Math.abs(closes[i] - closes[i - period]);
-    let volatility = 0;
-    for (let j = i - period + 1; j <= i; j++) volatility += Math.abs(closes[j] - closes[j - 1]);
-
-    const er = volatility === 0 ? 0 : change / volatility;
-    const sc = kamaSmoothingConstant(er);
-    kama = kama + sc * (closes[i] - kama);
-  }
-
-  kamaState[symbol][period]       = kama;
-  // Keep the last (period+1) closes so advanceKAMA can compute ER incrementally
-  kamaCloseWindow[symbol][period] = closes.slice(-(period + 1));
-}
-
-function advanceKAMA(symbol, period, closedClose) {
-  if (kamaState[symbol][period] === null) return;
-
-  const window = kamaCloseWindow[symbol][period];
-  window.push(closedClose);
-  if (window.length > period + 1) window.shift();
-  if (window.length < period + 1) return; // not enough data yet to compute ER
-
-  const change = Math.abs(window[window.length - 1] - window[0]);
-  let volatility = 0;
-  for (let j = 1; j < window.length; j++) volatility += Math.abs(window[j] - window[j - 1]);
-
-  const er = volatility === 0 ? 0 : change / volatility;
-  const sc = kamaSmoothingConstant(er);
-
-  kamaState[symbol][period] = kamaState[symbol][period] + sc * (closedClose - kamaState[symbol][period]);
-}
-
-function getKAMA(symbol, period) {
-  return kamaState[symbol][period];
-}
-
-// ─── KAMA touch and timeout detection ─────────────────────────────────────────
-function checkKAMATouches(symbol, timeframe, closedCandle) {
-  const symbolName  = displayNames[symbol] || symbol;
-  const granularity = timeframeMap[timeframe];
-  const currentTimestamp = closedCandle.timestamp;
-
-  KAMA_PERIODS.forEach(period => {
-    const kama = getKAMA(symbol, period); 
-    if (kama === null) return;
-
-    // Touch condition: The KAMA value lies anywhere between or exactly on the Candle's High and Low
-    const touched = closedCandle.low <= kama && closedCandle.high >= kama;
-
-    const dedupKey  = `${symbol}:${timeframe}:${period}`;
-    const state     = kamaNotificationState[symbol][timeframe][period];
-    const kamaEmoji = KAMA_EMOJIS[period] || period;
-
-    // Process KAMA Touch — only for the designated touch-alert KAMA
-    if (period === TOUCH_ALERT_KAMA && touched) {
-      // Evaluate Cooldown for Touch Alert
-      const candlesPassed = state.lastAlertTimestamp === null 
-        ? Infinity 
-        : (currentTimestamp - state.lastAlertTimestamp) / granularity;
-
-      const candlesClear = candlesPassed >= COOLDOWN_CANDLES;
-
-      if (state.notifSent && candlesClear) {
-        state.notifSent = false;
-        console.log(`[Lock] Released ${dedupKey}`);
-      }
-
-      if (!state.notifSent) {
-        state.lastAlertTimestamp = currentTimestamp;
-        state.notifSent          = true;
-
-        queueAlert(kamaEmoji, symbolName, dedupKey);
-      }
-    }
-  });
-}
-
-// ─── EMA helpers (classic EMA, used only for the touch alert) ─────────────────
+// ─── EMA helpers ──────────────────────────────────────────────────────────────
 function initEMA(symbol, closedCandles, period) {
   const data = closedCandles
     .filter(c => isFinite(c.close) && c.close > 0)
@@ -316,7 +181,7 @@ function getEMA(symbol, period) {
 }
 
 // ─── EMA touch detection ───────────────────────────────────────────────────────
-// Mirrors checkKAMATouches — fires its own, independent touch alert for EMA100.
+// Fires a touch alert for each EMA listed in TOUCH_ALERT_EMAS (EMA20 and EMA100).
 function checkEMATouches(symbol, timeframe, closedCandle) {
   const symbolName  = displayNames[symbol] || symbol;
   const granularity = timeframeMap[timeframe];
@@ -333,9 +198,9 @@ function checkEMATouches(symbol, timeframe, closedCandle) {
     const state    = emaNotificationState[symbol][timeframe][period];
     const emaEmoji = EMA_EMOJIS[period] || period;
 
-    // Process EMA Touch — only for the designated touch-alert EMA
-    if (period === TOUCH_ALERT_EMA && touched) {
-      // Evaluate Cooldown for Touch Alert (shares the same COOLDOWN_CANDLES as KAMA)
+    // Process EMA Touch — only for the designated touch-alert EMAs
+    if (TOUCH_ALERT_EMAS.includes(period) && touched) {
+      // Evaluate Cooldown for Touch Alert (same COOLDOWN_CANDLES for every EMA)
       const candlesPassed = state.lastAlertTimestamp === null
         ? Infinity
         : (currentTimestamp - state.lastAlertTimestamp) / granularity;
@@ -357,7 +222,7 @@ function checkEMATouches(symbol, timeframe, closedCandle) {
   });
 }
 
-// ─── Candle color + KAMA(10) pullback streak detection ──────────────────────────
+// ─── Candle color + EMA(20) pullback streak detection ───────────────────────────
 // Candle colour is decided purely by open vs close:
 //   close > open  -> bullish
 //   close < open  -> bearish
@@ -370,19 +235,19 @@ function classifyCandleColor(symbol, timeframe, closedCandle) {
 
 function classifyPullbackType(symbol, timeframe, closedCandle) {
   const color = classifyCandleColor(symbol, timeframe, closedCandle);
-  const kama  = getKAMA(symbol, PULLBACK_KAMA_PERIOD);
-  if (color === null || kama === null) return null;
+  const ema   = getEMA(symbol, PULLBACK_EMA_PERIOD);
+  if (color === null || ema === null) return null;
 
-  // Uptrend pullback: a red candle that still closes at/above the KAMA(10)
-  if (color === 'bearish' && closedCandle.close >= kama) return 'redPullback';
+  // Uptrend pullback: a red candle that still closes at/above the EMA(20)
+  if (color === 'bearish' && closedCandle.close >= ema) return 'redPullback';
 
-  // Downtrend pullback (vice versa): a green candle that still closes at/below the KAMA(10)
-  if (color === 'bullish' && closedCandle.close <= kama) return 'greenPullback';
+  // Downtrend pullback (vice versa): a green candle that still closes at/below the EMA(20)
+  if (color === 'bullish' && closedCandle.close <= ema) return 'greenPullback';
 
   return null;
 }
 
-function checkKamaPullbackStreak(symbol, timeframe, closedCandle) {
+function checkEmaPullbackStreak(symbol, timeframe, closedCandle) {
   const symbolName = displayNames[symbol] || symbol;
   const type        = classifyPullbackType(symbol, timeframe, closedCandle);
   const state        = streakState[symbol][timeframe];
@@ -408,7 +273,7 @@ function checkKamaPullbackStreak(symbol, timeframe, closedCandle) {
 
 // ─── Consecutive same-colour candle detection ──────────────────────────────────
 // Fires once when CONSECUTIVE_CANDLE_LEN closed candles in a row are the same
-// colour (all bullish or all bearish), regardless of where they sit vs KAMA/EMA.
+// colour (all bullish or all bearish), regardless of where they sit vs the EMAs.
 function checkConsecutiveCandles(symbol, timeframe, closedCandle) {
   const symbolName = displayNames[symbol] || symbol;
   const color      = classifyCandleColor(symbol, timeframe, closedCandle);
@@ -445,7 +310,7 @@ function seedRunState(symbol, timeframe, closedCandles) {
   });
   st.alertSent = st.count >= CONSECUTIVE_CANDLE_LEN;
 
-  // Pullback streak needs KAMA at each historical bar, so just start it clean.
+  // Pullback streak needs the EMA at each historical bar, so just start it clean.
   streakState[symbol][timeframe] = { type: null, count: 0, alertSent: false };
 }
 
@@ -475,27 +340,20 @@ function updateCurrentCandle(symbol, price, timestamp) {
 
         const closedClose = closedCandle.close;
 
-        // Advance KAMA/EMA with the closed candle's close FIRST, so every check below
+        // Advance the EMAs with the closed candle's close FIRST, so every check below
         // compares against the same value a chart shows on that candle. Previously the
-        // checks ran against the PREVIOUS candle's KAMA, which caused wrong alerts.
-        KAMA_PERIODS.forEach(period => {
-          advanceKAMA(symbol, period, closedClose);
-        });
-
+        // checks ran against the PREVIOUS candle's EMA, which caused wrong alerts.
         EMA_PERIODS.forEach(period => {
           advanceEMA(symbol, period, closedClose);
         });
 
         startAlertBatch();
 
-        // Check for KAMA touches using the fully formed closed candle
-        checkKAMATouches(symbol, timeframe, closedCandle);
-
-        // Check for EMA(100) touches using the fully formed closed candle
+        // Check for EMA(20) and EMA(100) touches using the fully formed closed candle
         checkEMATouches(symbol, timeframe, closedCandle);
 
-        // Check for KAMA(10) pullback candle streaks using the fully formed closed candle
-        checkKamaPullbackStreak(symbol, timeframe, closedCandle);
+        // Check for EMA(20) pullback candle streaks using the fully formed closed candle
+        checkEmaPullbackStreak(symbol, timeframe, closedCandle);
 
         // Check for consecutive same-colour candles using the fully formed closed candle
         checkConsecutiveCandles(symbol, timeframe, closedCandle);
@@ -526,12 +384,6 @@ function updateCurrentCandle(symbol, price, timestamp) {
 function recalculateIndicators(symbol, timeframe, livePrice) {
   if (!historicalData[symbol][timeframe].length || !currentCandles[symbol][timeframe]) return;
 
-  let kamaString = '';
-  KAMA_PERIODS.forEach(period => {
-    const kamaVal = getKAMA(symbol, period);
-    kamaString += `KAMA${period}:${kamaVal !== null ? kamaVal.toFixed(4) : 'N/A'} `;
-  });
-
   let emaString = '';
   EMA_PERIODS.forEach(period => {
     const emaVal = getEMA(symbol, period);
@@ -539,7 +391,7 @@ function recalculateIndicators(symbol, timeframe, livePrice) {
   });
 
   process.stdout.write(
-    `\r[${symbol}] Price:${livePrice.toFixed(4)} ${kamaString}${emaString}  `
+    `\r[${symbol}] Price:${livePrice.toFixed(4)} ${emaString}  `
   );
 }
 
@@ -564,18 +416,13 @@ function processCandles(symbol, timeframe, candles) {
 
   seedRunState(symbol, timeframe, historicalData[symbol][timeframe]);
 
-  KAMA_PERIODS.forEach(period => {
-    initKAMA(symbol, historicalData[symbol][timeframe], period);
-  });
-
   EMA_PERIODS.forEach(period => {
     initEMA(symbol, historicalData[symbol][timeframe], period);
   });
 
-  const kamaLogDetails = KAMA_PERIODS.map(p => `KAMA${p}:${kamaState[symbol][p]?.toFixed(4) ?? 'N/A'}`).join(' | ');
   const emaLogDetails  = EMA_PERIODS.map(p => `EMA${p}:${emaState[symbol][p]?.toFixed(4) ?? 'N/A'}`).join(' | ');
   console.log(
-    `[${symbol}/${timeframe}] Loaded ${data.length} candles | ${kamaLogDetails} | ${emaLogDetails}`
+    `[${symbol}/${timeframe}] Loaded ${data.length} candles | ${emaLogDetails}`
   );
 }
 
