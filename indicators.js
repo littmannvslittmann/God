@@ -21,7 +21,7 @@ let ws;
 
 // ─── Indicator Configuration ──────────────────────────────────────────────────
 const KAMA_PERIODS       = [10, 20];    // Single KAMA now, used for both the touch alert and the pullback-streak alert
-const TOUCH_ALERT_KAMA   = 10;      // KAMA used to detect a "touch" and fire the touch alert
+const TOUCH_ALERT_KAMA   = 20;      // KAMA used to detect a "touch" and fire the touch alert
 const COOLDOWN_CANDLES   = 2;        // Closed candles to wait before re-alerting for touches
 
 // Kaufman's Adaptive Moving Average smoothing constants (standard defaults)
@@ -35,7 +35,7 @@ const KAMA_EMOJIS = {
 };
 
 // ─── KAMA-pullback candle-streak configuration ─────────────────────────────────
-const PULLBACK_KAMA_PERIOD  = 10;      // KAMA used to gauge trend side for the pullback alert
+const PULLBACK_KAMA_PERIOD  = 20;      // KAMA used to gauge trend side for the pullback alert
 const PULLBACK_STREAK_LEN   = 2;       // Consecutive pullback candles required to fire
 const PULLBACK_EMOJIS = {
   redPullback:   '🔴',   // uptrend (price above KAMA10): red candles that still close at/above it
@@ -45,7 +45,7 @@ const PULLBACK_EMOJIS = {
 // ─── KAMA deviation alert configuration ────────────────────────────────────────
 // Fires when the LIVE price is at least DEVIATION_ALERT_PCT % away from KAMA.
 const DEVIATION_KAMA_PERIOD = 20;     // KAMA used as the reference
-const DEVIATION_ALERT_PCT   = 0.14;   // Distance from KAMA (in %) that triggers the alert (+/-)
+const DEVIATION_ALERT_PCT   = 0.30;   // Distance from KAMA (in %) that triggers the alert (+/-)
 const DEVIATION_EMOJIS = {
   above: '🚀',
   below: '🔻'
@@ -54,7 +54,7 @@ const DEVIATION_EMOJIS = {
 // ─── Consecutive same-colour candle configuration ──────────────────────────────
 // Independent of KAMA/EMA and of the pullback streak: fires whenever N closed
 // candles in a row share the same colour, anywhere on the chart.
-const CONSECUTIVE_CANDLE_LEN = 3;      // Same-colour candles in a row required to fire
+const CONSECUTIVE_CANDLE_LEN = 4;      // Same-colour candles in a row required to fire
 const CONSECUTIVE_EMOJIS = {
   bullish: '🟢',
   bearish: '🔴'
