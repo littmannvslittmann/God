@@ -500,4 +500,17 @@ if (!TELEGRAM_BOT_TOKEN) {
   console.error('!!! Start with:  TELEGRAM_BOT_TOKEN=your_token node indicators.js\n');
 }
 
+// ─── Health-check HTTP server ────────────────────────────────────────────────
+// Hosting platforms require the app to listen on the PORT env var. This tiny
+// server only answers health checks; it does not touch the bot logic above.
+const http = require('http');
+const PORT = process.env.PORT || 8080;
+
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('Deriv EMA bot is running\n');
+}).listen(PORT, '0.0.0.0', () => {
+  console.log(`[HTTP] Health-check server listening on port ${PORT}`);
+});
+
 initializeWebSocket();
