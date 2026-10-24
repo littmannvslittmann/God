@@ -20,7 +20,7 @@ const API_URL = 'wss://api.derivws.com/trading/v1/options/ws/public';
 let ws;
 
 // ─── Indicator Configuration ──────────────────────────────────────────────────
-const COOLDOWN_CANDLES   = 4;        // Closed candles to wait before re-alerting for touches
+const COOLDOWN_CANDLES   = 2;        // Closed candles to wait before re-alerting for touches
 
 // ─── EMA configuration ─────────────────────────────────────────────────────────
 const EMA_PERIODS        = [20, 100];   // Classic EMAs
@@ -43,7 +43,7 @@ const PULLBACK_EMOJIS = {
 // ─── Consecutive same-colour candle configuration ──────────────────────────────
 // Independent of EMA and of the pullback streak: fires whenever N closed
 // candles in a row share the same colour, anywhere on the chart.
-const CONSECUTIVE_CANDLE_LEN = 4;      // Same-colour candles in a row required to fire
+const CONSECUTIVE_CANDLE_LEN = 8;      // Same-colour candles in a row required to fire
 const CONSECUTIVE_EMOJIS = {
   bullish: '🟢',
   bearish: '🔴'
@@ -51,14 +51,14 @@ const CONSECUTIVE_EMOJIS = {
 
 // ─── Symbols & timeframes ─────────────────────────────────────────────────────
 const SYMBOLS    = ['R_10' /*, 'R_25' */];
-const TIMEFRAMES = ['30min'];
+const TIMEFRAMES = ['15min'];
 
-const timeframeMap = { '30min': 1800 }; // 15 mins = 900 seconds
+const timeframeMap = { '15min': 900 }; // 15 mins = 900 seconds
 
 const displayNames = {
   'R_10':    'Volatility 10 Index',
   // 'R_25':    'Volatility 25 Index',
-  '30min':  '30 minutes'
+  '15min':  '15 minutes'
 };
 
 const MAX_HISTORICAL_CANDLES = 5000;
@@ -499,18 +499,5 @@ if (!TELEGRAM_BOT_TOKEN) {
   console.error('\n!!! TELEGRAM_BOT_TOKEN is not set - you will NOT get notifications.');
   console.error('!!! Start with:  TELEGRAM_BOT_TOKEN=your_token node indicators.js\n');
 }
-
-// ─── Health-check HTTP server ────────────────────────────────────────────────
-// Hosting platforms require the app to listen on the PORT env var. This tiny
-// server only answers health checks; it does not touch the bot logic above.
-const http = require('http');
-const PORT = process.env.PORT || 8080;
-
-http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Deriv EMA bot is running\n');
-}).listen(PORT, '0.0.0.0', () => {
-  console.log(`[HTTP] Health-check server listening on port ${PORT}`);
-});
 
 initializeWebSocket();
